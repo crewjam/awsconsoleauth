@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -11,7 +13,6 @@ import (
 	"time"
 
 	"github.com/crowdmob/goamz/aws"
-	"github.com/crowdmob/goamz/iam"
 	"github.com/crowdmob/goamz/sts"
 	"github.com/dgrijalva/jwt-go"
 	"golang.org/x/oauth2"
@@ -23,11 +24,13 @@ var OauthConfig = &oauth2.Config{
 	Endpoint: google.Endpoint,
 }
 
-var ClientID = flag.String("google-client-id", "", "OAuth Client ID")
-var ClientSecret = flag.String("google-client-secret", "", "OAuth Client Secret")
+var GoogleClientID = flag.String("google-client-id", "", "OAuth Client ID")
+var GoogleClientSecret = flag.String("google-client-secret", "", "OAuth Client Secret")
+
+var TrustXForwarded = flag.Bool("trust-x-forwarded", true, "Trust the X-Forwarded-{For,Proto} headers")
 
 // We reuse the Google client secret as the web secret.
-var Secret = ClientSecret
+var Secret = GoogleClientSecret
 
 var GoogleLoginTimeout = flag.Duration("google-login-timeout", time.Second*120,
 	"The maximum time that we are willing to wait for a login to succeed")
@@ -40,15 +43,18 @@ var jwtKeys = map[string]interface{}{}
 // https://alice.example.com, or http://localhost:8000)
 func getOriginURL(r *http.Request) string {
 	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
+	if *TrustXForwarded {
+		scheme = r.Header.Get("X-Forwarded-Proto")
+	}
+	if r.TLS != nil {
+		scheme = "https"
 	}
 	return fmt.Sprintf("%s://%s", scheme, r.Host)
 }
 
 func getRemoteAddress(r *http.Request) string {
 	remoteAddr := r.RemoteAddr
-	if r.Header.Get("X-Forwarded-For") != "" {
+	if *TrustXForwarded && r.Header.Get("X-Forwarded-For") != "" {
 		forwardedFor := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
 		remoteAddr = strings.TrimSpace(forwardedFor[len(forwardedFor)-1])
 	}
@@ -69,7 +75,7 @@ func GetRoot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oauthConfig := *OauthConfig
-	oauthConfig.RedirectURL = fmt.Sprintf("%s/callback", getOriginURL(r))
+	oauthConfig.RedirectURL = fmt.Sprintf("%s/oauth2callback", getOriginURL(r))
 
 	url := oauthConfig.AuthCodeURL(state)
 
@@ -114,6 +120,15 @@ type Group struct {
 	Name string `json:"name"`
 }
 
+func minifyJSON(input string) string {
+	output := bytes.NewBuffer(nil)
+	err := json.Compact(output, []byte(input))
+	if err != nil {
+		panic(err)
+	}
+	return output.String()
+}
+
 func GetCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.FormValue("state")
 	action, err := valididateState(r, state)
@@ -124,7 +139,7 @@ func GetCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oauthConfig := *OauthConfig
-	oauthConfig.RedirectURL = fmt.Sprintf("%s/callback", getOriginURL(r))
+	oauthConfig.RedirectURL = fmt.Sprintf("%s/oauth2callback", getOriginURL(r))
 
 	oauthToken, err := oauthConfig.Exchange(oauth2.NoContext, r.FormValue("code"))
 	if err != nil {
@@ -171,12 +186,21 @@ func GetCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
+
+	if r2.StatusCode != 200 {
+		response, _ := ioutil.ReadAll(r2.Body)
+		log.Printf("ERROR: group fetch failed: %#v %s", r2, response)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
 	groupsResponse := GroupsResponse{}
 	if err := json.NewDecoder(r2.Body).Decode(&groupsResponse); err != nil {
 		log.Printf("ERROR: oauth: %s", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
+	log.Printf("groups=%#v", groupsResponse)
 
 	groupNames := map[string]struct{}{}
 	for _, group := range groupsResponse.Groups {
@@ -185,6 +209,7 @@ func GetCallback(w http.ResponseWriter, r *http.Request) {
 
 	policyString := ""
 	for _, policyRecord := range PolicyRecords {
+		log.Printf("policyRecord.Name=%#v", policyRecord.Name)
 		_, ok := groupNames[policyRecord.Name]
 		if ok {
 			log.Printf("%s: assigned policy %s", emailAddress, policyRecord.Name)
@@ -197,6 +222,9 @@ func GetCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
+
+	policyString = minifyJSON(policyString)
+	log.Printf("policyString: %s", policyString)
 
 	if action == "key" {
 		getTokenResult, err := stsConnection.GetFederationToken(emailAddress,
@@ -243,41 +271,44 @@ var PolicyRecords = []PolicyRecord{
 		}`,
 	},
 	{
+		Name: "aws-users",
+		Policy: `{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "NotAction": "iam:*",
+      "Resource": "*"
+    }
+  ]
+}`,
+	},
+	{
 		Name: "aws-read-only",
 		Policy: `{
   "Version": "2012-10-17",
   "Statement": [
     {
       "Action": [
-        "appstream:Get*",
         "autoscaling:Describe*",
-        "cloudformation:DescribeStacks",
-        "cloudformation:DescribeStackEvents",
-        "cloudformation:DescribeStackResource",
-        "cloudformation:DescribeStackResources",
-        "cloudformation:GetTemplate",
+        "cloudformation:Describe*",
+        "cloudformation:Get*",
         "cloudformation:List*",
         "cloudfront:Get*",
         "cloudfront:List*",
-        "cloudtrail:DescribeTrails",
-        "cloudtrail:GetTrailStatus",
+        "cloudtrail:Describe*",
+        "cloudtrail:Get*",
         "cloudwatch:Describe*",
         "cloudwatch:Get*",
         "cloudwatch:List*",
-        "directconnect:Describe*",
-        "dynamodb:GetItem",
-        "dynamodb:BatchGetItem",
+        "dynamodb:Get*",
+        "dynamodb:BatchGet*",
         "dynamodb:Query",
         "dynamodb:Scan",
-        "dynamodb:DescribeTable",
-        "dynamodb:ListTables",
+        "dynamodb:Describe*",
+        "dynamodb:List*",
         "ec2:Describe*",
         "elasticache:Describe*",
-        "elasticbeanstalk:Check*",
-        "elasticbeanstalk:Describe*",
-        "elasticbeanstalk:List*",
-        "elasticbeanstalk:RequestEnvironmentInfo",
-        "elasticbeanstalk:RetrieveEnvironmentInfo",
         "elasticloadbalancing:Describe*",
         "elasticmapreduce:Describe*",
         "elasticmapreduce:List*",
@@ -288,12 +319,8 @@ var PolicyRecords = []PolicyRecord{
         "kinesis:Describe*",
         "kinesis:Get*",
         "kinesis:List*",
-        "opsworks:Describe*",
-        "opsworks:Get*",
         "route53:Get*",
         "route53:List*",
-        "redshift:Describe*",
-        "redshift:ViewQueriesInConsole",
         "rds:Describe*",
         "rds:ListTagsForResource",
         "s3:Get*",
@@ -308,25 +335,9 @@ var PolicyRecords = []PolicyRecord{
         "sqs:GetQueueAttributes",
         "sqs:ListQueues",
         "sqs:ReceiveMessage",
-        "storagegateway:List*",
-        "storagegateway:Describe*",
-        "tag:get*",
-        "trustedadvisor:Describe*"
+        "tag:get*"
       ],
       "Effect": "Allow",
-      "Resource": "*"
-    }
-  ]
-}`,
-	},
-	{
-		Name: "aws-users",
-		Policy: `{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "NotAction": "iam:*",
       "Resource": "*"
     }
   ]
@@ -377,7 +388,6 @@ func GetAWSConsoleURLForUser(emailAddress string, policString string) (string, e
 }
 
 var stsConnection *sts.STS
-var iamConnection *iam.IAM
 
 type TimeValue struct {
 	Value time.Time
@@ -406,11 +416,12 @@ func main() {
 	flag.Parse()
 
 	// Configure OAuth
-	OauthConfig.ClientID = *ClientID
-	OauthConfig.ClientSecret = *ClientSecret
+	OauthConfig.ClientID = *GoogleClientID
+	OauthConfig.ClientSecret = *GoogleClientSecret
 	if *GoogleDomain != "" {
 		OauthConfig.Endpoint.AuthURL += fmt.Sprintf("?hd=%s", *GoogleDomain)
 	}
+	log.Printf("OauthConfig: %#v", OauthConfig)
 
 	// Fetch the google keys for oauth
 	googleCertsResponse, err := http.Get("https://www.googleapis.com/oauth2/v1/certs")
@@ -434,13 +445,10 @@ func main() {
 		panic(err)
 	}
 
-	//WhatGroupsIsRossIn()
-
 	stsConnection = sts.New(auth, aws.GetRegion(*region))
-	iamConnection = iam.New(auth, aws.GetRegion(*region))
 
 	http.HandleFunc("/", GetRoot)
-	http.HandleFunc("/callback", GetCallback)
+	http.HandleFunc("/oauth2callback", GetCallback)
 
 	fmt.Printf("Listening on %s\n", *listenAddress)
 	log.Fatal(http.ListenAndServe(*listenAddress, nil))

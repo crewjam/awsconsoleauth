@@ -1,0 +1,299 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "aws auth proxy",
+  "Parameters": {
+    "DnsName": {
+      "Description": "DNS name",
+      "Type": "String",
+      "Default": "aws.example.com"
+    },
+    "KeyPair": {
+      "Description": "Keypair",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleClientId": {
+      "Description": "Google Client Id",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleClientSecret": {
+      "Description": "Google Client Secret",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleDomain": {
+      "Description": "Google Client Secret",
+      "Type": "String",
+      "Default": "example.com"
+    },
+    "FrontendSSLCertificateARN": {
+      "Description": "Frontend SSL Certificate ARN",
+      "Type": "String",
+      "Default": ""
+    },
+    "DockerImage": {
+      "Description": "Docker image for the auth proxy",
+      "Type": "String",
+      "Default": "crewjam/awsauthproxy:latest"
+    }
+  },
+  "Mappings": {
+    "RegionMap": {
+      "us-east-1": {
+        "AMI": "ami-76e27e1e"
+      }
+    }
+  },
+  "Resources": {
+    "FederationUser": {
+      "Type": "AWS::IAM::User",
+      "Properties" : {
+        "Policies": [{
+          "PolicyName" : "AllowGetFederationToken",
+          "PolicyDocument" : {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "sts:GetFederationToken",
+                "Resource": "*"
+              }
+            ]
+          }
+        },
+        {
+          "PolicyName" : "MaxAllowedAccessOfFederatedUsers",
+          "PolicyDocument" : {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "NotAction": "iam:*",
+                "Resource": "*"
+              }
+            ]
+          }
+        }]
+      }
+    },
+    "FederationUserAccessKey": {
+      "Type": "AWS::IAM::AccessKey",
+      "Properties": {
+        "UserName": {"Ref": "FederationUser"}
+      }
+    },
+    "LoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "ConnectionDrainingPolicy": {
+          "Enabled": true,
+          "Timeout": 30
+        },
+        "CrossZone": true,
+        "HealthCheck": {
+          "HealthyThreshold": "2",
+          "Interval": "6",
+          "Target": "TCP:80",
+          "Timeout": "5",
+          "UnhealthyThreshold": "2"
+        },
+        "AvailabilityZones": [
+          {
+            "Fn::Select": [
+              "1",
+              {
+                "Fn::GetAZs": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ]
+          },
+          {
+            "Fn::Select": [
+              "2",
+              {
+                "Fn::GetAZs": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ]
+          },
+          {
+            "Fn::Select": [
+              "3",
+              {
+                "Fn::GetAZs": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ]
+          }
+        ],
+        "Listeners": [
+          {
+            "InstancePort": "80",
+            "InstanceProtocol": "HTTP",
+            "LoadBalancerPort": "443",
+            "Protocol": "HTTPS",
+            "SSLCertificateId": {"Ref": "FrontendSSLCertificateARN"}
+          }
+        ],
+        "SecurityGroups": [
+          {"Fn::GetAtt": ["LoadBalancerSecurityGroup", "GroupId"]}
+        ]
+      }
+    },
+    "LoadBalancerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Enable SSH access",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Enable SSH access",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "SourceSecurityGroupOwnerId": {
+              "Fn::GetAtt": [
+                "LoadBalancer",
+                "SourceSecurityGroup.OwnerAlias"
+              ]
+            },
+            "SourceSecurityGroupName": {
+              "Fn::GetAtt": ["LoadBalancer", "SourceSecurityGroup.GroupName"]
+            }
+          }
+        ]
+      }
+    },
+    "ASG": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "AvailabilityZones": [
+          {
+            "Fn::Select": [
+              "1",
+              {
+                "Fn::GetAZs": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ]
+          },
+          {
+            "Fn::Select": [
+              "2",
+              {
+                "Fn::GetAZs": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ]
+          },
+          {
+            "Fn::Select": [
+              "3",
+              {
+                "Fn::GetAZs": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ]
+          }
+        ],
+        "MaxSize": "1",
+        "MinSize": "1",
+        "HealthCheckGracePeriod": "300",
+        "HealthCheckType": "ELB",
+        "LaunchConfigurationName": {
+          "Ref": "LaunchConfig"
+        },
+        "LoadBalancerNames": [
+          {"Ref": "LoadBalancer"}
+        ],
+        "Tags": [
+          {
+            "PropagateAtLaunch": true,
+            "Key": "Name",
+            "Value": {
+              "Ref": "DnsName"
+            }
+          }
+        ]
+      }
+    },
+    "LaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "ImageId": {
+          "Fn::FindInMap": [
+            "RegionMap",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMI"
+          ]
+        },
+        "InstanceType": "t2.micro",
+        "KeyName": {
+          "Ref": "KeyPair"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "SecurityGroup"
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "set -ex\n",
+                "curl -sSL https://get.docker.com/ | sh\n",
+                "docker run -d --name=awsauthproxy ",
+                "-e GOOGLE_CLIENT_ID=",
+                {
+                  "Ref": "GoogleClientId"
+                },
+                " -e GOOGLE_CLIENT_SECRET=",
+                {
+                  "Ref": "GoogleClientSecret"
+                },
+                " -e GOOGLE_DOMAIN=",
+                {
+                  "Ref": "GoogleDomain"
+                },
+                " -e AWS_ACCESS_KEY_ID=", {"Ref": "FederationUserAccessKey"},
+                " -e AWS_SECRET_ACCESS_KEY=", {"Fn::GetAtt": ["FederationUserAccessKey", "SecretAccessKey"]},
+                " -p 80:80 ",
+                {"Ref": "DockerImage"},
+                "\n"
+              ]
+            ]
+          }
+        }
+      }
+    }
+  }
+}
