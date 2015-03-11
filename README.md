@@ -1,4 +1,14 @@
 
+# How It Works
+
+- Your users navigate to this service.
+- We redirect them through the goole login process.
+- We check their group membership to determine which access policy to apply
+- We generate credentials using the AWS token service and the GetFederationToken
+  API.
+- We build a URL to the AWS console that contains their temporary credentials 
+  and redirect the there.
+
 # Setup
 
 1. Get a Google OAuth Client ID and Secret.
@@ -23,13 +33,9 @@
           --certificate-chain file://intermediate.crt
 
 3. Navigate to https://console.aws.amazon.com/cloudformation and use the 
-   provided CloudFormation template.
+   provided CloudFormation template. Alternately you can use the provided 
+   creation script.
    
-   
-        ParameterKey=DnsName,ParameterValue=$DNS_NAME \
-        ParameterKey=KeyPair,ParameterValue=<your aw \
-                        
-aws iam upload-server-certificate --server-certificate-name aws.example.com \
-  --certificate-body file://ssl.crt \
-  --private-key file://ssl.key \
-  --certificate-chain file://intermediate.crt
+        cp create.sh.template create.sh
+        vi create.sh  # fill in the parameters
+        ./create.sh
