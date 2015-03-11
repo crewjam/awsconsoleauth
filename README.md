@@ -2,12 +2,13 @@
 # How It Works
 
 - Your users navigate to this service.
-- We redirect them through the goole login process.
-- We check their group membership to determine which access policy to apply
-- We generate credentials using the AWS token service and the GetFederationToken
+- We redirect them through the google login process.
+- We check their group membership in the Google directory service to determine 
+  which access policy to apply.
+- We generate credentials using the AWS Token service and the GetFederationToken
   API.
 - We build a URL to the AWS console that contains their temporary credentials 
-  and redirect the there.
+  and redirect them there.
 
 # Setup
 
@@ -39,3 +40,9 @@
         cp create.sh.template create.sh
         vi create.sh  # fill in the parameters
         ./create.sh
+
+# Limitations
+
+- The Google groups and the AWS policy mappings are currently hard coded.
+- The size of policy document passed to GetFederationToken() is fairly limited.
+  I had to remove stuff from the default ReadOnlyAccess policy to make it fit.
