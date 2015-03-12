@@ -21,5 +21,4 @@ echo "bucket is $bucket"
 
 aws s3 cp awsauthd.conf s3://$bucket/awsauthd.conf
 
-
- docker run -d -e AWSAUTHD_AWS_ACCESS_KEY_ID=AKIAI6FCNARSYM4DJFTQ -e AWSAUTHD_AWS_SECRET_ACCESS_KEY=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 -p 80:80 crewjam/awsauthproxy:latest awsauthd -listen=0.0.0.0:80 -config s3://authproxy-databucket-p1pe62giq256/awsauthd.conf
+docker run -d -e AWSAUTHD_AWS_ACCESS_KEY_ID=AKIAI6FCNARSYM4DJFTQ -e AWSAUTHD_AWS_SECRET_ACCESS_KEY=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 -p 80:80 crewjam/awsauthproxy:latest awsauthd -listen=0.0.0.0:80 -config s3://authproxy-databucket-p1pe62giq256/awsauthd.conf
