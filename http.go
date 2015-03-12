@@ -1,85 +1,78 @@
-package main
+package awsconsoleauth
 
 import (
-	"bytes"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/crowdmob/goamz/aws"
 	"github.com/crowdmob/goamz/sts"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/drone/config"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 )
 
-var OauthConfig = &oauth2.Config{
-	Scopes:   []string{"email", "https://www.googleapis.com/auth/admin.directory.group.readonly"},
-	Endpoint: google.Endpoint,
-}
+var trustXForwarded = config.Bool("trust-x-forwarded", true)
 
-var GoogleClientID = flag.String("google-client-id", "", "OAuth Client ID")
-var GoogleClientSecret = flag.String("google-client-secret", "", "OAuth Client Secret")
-
-var TrustXForwarded = flag.Bool("trust-x-forwarded", true, "Trust the X-Forwarded-{For,Proto} headers")
+var loginTimeout = config.Duration("google-login-timeout", time.Second*120)
 
 // We reuse the Google client secret as the web secret.
-var Secret = GoogleClientSecret
-
-var GoogleLoginTimeout = flag.Duration("google-login-timeout", time.Second*120,
-	"The maximum time that we are willing to wait for a login to succeed")
-
-var GoogleDomain = flag.String("google-domain", "", "Restrict the user domain to the specified one.")
-
-var jwtKeys = map[string]interface{}{}
+var secret = googleClientSecret
 
 // getOriginUrl returns the HTTP origin string (i.e.
 // https://alice.example.com, or http://localhost:8000)
 func getOriginURL(r *http.Request) string {
 	scheme := "https"
-	if *TrustXForwarded {
-		scheme = r.Header.Get("X-Forwarded-Proto")
+	if r.TLS == nil {
+		scheme = "http"
 	}
-	if r.TLS != nil {
-		scheme = "https"
+	if *trustXForwarded {
+		scheme = r.Header.Get("X-Forwarded-Proto")
 	}
 	return fmt.Sprintf("%s://%s", scheme, r.Host)
 }
 
 func getRemoteAddress(r *http.Request) string {
 	remoteAddr := r.RemoteAddr
-	if *TrustXForwarded && r.Header.Get("X-Forwarded-For") != "" {
+	if *trustXForwarded {
 		forwardedFor := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
 		remoteAddr = strings.TrimSpace(forwardedFor[len(forwardedFor)-1])
 	}
 	return remoteAddr
 }
 
+// GetRoot handles requests for '/' by redirecting to the Google OAuth URL.
+//
+// Any query string arguments are passed securely through the OAuth flow to
+// /oauth2callback
 func GetRoot(w http.ResponseWriter, r *http.Request) {
-	token := jwt.New(jwt.GetSigningMethod("HS256"))
-	token.Claims["ua"] = r.Header.Get("User-Agent")
-	token.Claims["ra"] = getRemoteAddress(r)
-	token.Claims["exp"] = time.Now().Add(*GoogleLoginTimeout).Unix()
-	token.Claims["action"] = r.URL.Query().Get("action")
-	state, err := token.SignedString([]byte(*Secret))
+	state, err := generateState(r)
 	if err != nil {
 		log.Printf("ERROR: cannot generate token: %s", err)
 		http.Error(w, "Authentication failed", 500)
 		return
 	}
 
-	oauthConfig := *OauthConfig
+	oauthConfig := *googleOauthConfig
 	oauthConfig.RedirectURL = fmt.Sprintf("%s/oauth2callback", getOriginURL(r))
-
 	url := oauthConfig.AuthCodeURL(state)
-
 	http.Redirect(w, r, url, http.StatusFound)
+}
+
+// generateState builds a JWT that we can use as /state/ across the oauth
+// request to mitigate CSRF. When handling the callback we use validateState()
+// to make sure that the callback request corresponds to a valid request we
+// emitted.
+func generateState(r *http.Request) (string, error) {
+	token := jwt.New(jwt.GetSigningMethod("HS256"))
+	token.Claims["ua"] = r.Header.Get("User-Agent")
+	token.Claims["ra"] = getRemoteAddress(r)
+	token.Claims["exp"] = time.Now().Add(*loginTimeout).Unix()
+	token.Claims["query"] = r.URL.RawQuery
+	state, err := token.SignedString([]byte(*secret))
+	return state, err
 }
 
 // valididateState checks that the state parameter is valid and returns nil if
@@ -87,7 +80,7 @@ func GetRoot(w http.ResponseWriter, r *http.Request) {
 // error to the user, it might contain security-sensitive information)
 func valididateState(r *http.Request, state string) (string, error) {
 	token, err := jwt.Parse(state, func(t *jwt.Token) (interface{}, error) {
-		return []byte(*Secret), nil
+		return []byte(*secret), nil
 	})
 	if err != nil {
 		return "", err
@@ -109,347 +102,155 @@ func valididateState(r *http.Request, state string) (string, error) {
 			token.Claims["ua"].(string), r.Header.Get("User-Agent"))
 	}
 
-	return token.Claims["action"].(string), nil
+	return token.Claims["query"].(string), nil
 }
 
-type GroupsResponse struct {
-	Groups []Group `json:"groups"`
-}
-
-type Group struct {
-	Name string `json:"name"`
-}
-
-func minifyJSON(input string) string {
-	output := bytes.NewBuffer(nil)
-	err := json.Compact(output, []byte(input))
-	if err != nil {
-		panic(err)
-	}
-	return output.String()
-}
-
+// GetCallback handles requests for '/oauth2callback' by validating the oauth
+// response, determining the user's group membership, determining the user's
+// AWS policy, fetching credentials and (optionally) redirecting to the console.
+//
+// The returned document is controlled by the `view` argument passed to the
+// root URL.
+//
+// - if view=sh is specified, then a bash-compatible script is returned with the
+//   credentials
+// - if view=csh is specified, then a csh-compatible script is returned with
+//   the credentials
+// - if view=fish is specified, then a fish-compatible script is returned with
+//   the credentials
+// - otherwise we redirect to the AWS Console. If `uri` is specified it is
+//   appended to the end of the aws console url.
+//
+// For example:
+//
+// - https://aws.example.com/?view=sh -> returns a bash script
+//
+// - https://aws.example.com/?uri=/s3/home -> redirects to https://console.aws.amazon.com/s3/home
+//
 func GetCallback(w http.ResponseWriter, r *http.Request) {
-	state := r.FormValue("state")
-	action, err := valididateState(r, state)
+	oauthConfig := *googleOauthConfig
+	oauthConfig.RedirectURL = fmt.Sprintf("%s/oauth2callback", getOriginURL(r))
+
+	oauthToken, err := oauthConfig.Exchange(oauth2.NoContext, r.FormValue("code"))
+	if err != nil {
+		log.Printf("oauth exchange failed: %s", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	rawQuery, err := valididateState(r, r.FormValue("state"))
 	if err != nil {
 		log.Printf("ERROR: state: %s", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
-	oauthConfig := *OauthConfig
-	oauthConfig.RedirectURL = fmt.Sprintf("%s/oauth2callback", getOriginURL(r))
-
-	oauthToken, err := oauthConfig.Exchange(oauth2.NoContext, r.FormValue("code"))
+	user, err := GetUserFromGoogleOauthToken(oauthToken.Extra("id_token").(string))
 	if err != nil {
-		log.Printf("ERROR: oauth: %s", err)
+		log.Printf("failed to parse google id_token: %s", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
-	token, err := jwt.Parse(oauthToken.Extra("id_token").(string),
-		func(t *jwt.Token) (interface{}, error) {
-			keyString, ok := jwtKeys[t.Header["kid"].(string)]
-			if !ok {
-				return nil, fmt.Errorf("Unknown key in token")
-			}
-			key, err := jwt.ParseRSAPublicKeyFromPEM([]byte(keyString.(string)))
-			if err != nil {
-				return nil, err
-			}
-			return key, nil
-		})
+	groups, err := GetUserGroups(user)
 	if err != nil {
-		log.Printf("ERROR: oauth: %s", err)
+		log.Printf("failed to fetch google group membership for %s: %s", user, err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
-	if *GoogleDomain != "" {
-		if token.Claims["hd"].(string) != *GoogleDomain {
-			log.Printf("ERROR: expected domain %s, got domain %s", *GoogleDomain,
-				token.Claims["hd"].(string))
-			http.Error(w, "Bad Request", http.StatusBadRequest)
-			return
-		}
-	}
-
-	emailAddress := token.Claims["email"].(string)
-	fmt.Printf("login %s from %s\n", emailAddress, getRemoteAddress(r))
-
-	httpClient := oauthConfig.Client(oauth2.NoContext, oauthToken)
-	r2, err := httpClient.Get(fmt.Sprintf("https://www.googleapis.com/admin/directory/v1/groups?userKey=%s",
-		emailAddress))
+	policy, err := MapUserAndGroupsToPolicy(user, groups)
 	if err != nil {
-		log.Printf("ERROR: oauth: %s", err)
+		log.Printf("failed to determine policy for %s: %s", user, err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
-	if r2.StatusCode != 200 {
-		response, _ := ioutil.ReadAll(r2.Body)
-		log.Printf("ERROR: group fetch failed: %#v %s", r2, response)
+	if policy == nil {
+		log.Printf("no matching policy for %s", user)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
-	groupsResponse := GroupsResponse{}
-	if err := json.NewDecoder(r2.Body).Decode(&groupsResponse); err != nil {
-		log.Printf("ERROR: oauth: %s", err)
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-	log.Printf("groups=%#v", groupsResponse)
-
-	groupNames := map[string]struct{}{}
-	for _, group := range groupsResponse.Groups {
-		groupNames[group.Name] = struct{}{}
-	}
-
-	policyString := ""
-	for _, policyRecord := range PolicyRecords {
-		log.Printf("policyRecord.Name=%#v", policyRecord.Name)
-		_, ok := groupNames[policyRecord.Name]
-		if ok {
-			log.Printf("%s: assigned policy %s", emailAddress, policyRecord.Name)
-			policyString = policyRecord.Policy
-			break
-		}
-	}
-	if policyString == "" {
-		log.Printf("%s: access denied", emailAddress)
+	credentials, err := GetCredentials(user, policy.Policy, time.Second*43200)
+	if err != nil {
+		log.Printf("failed to get credentials for %s: %s", user, err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
-	policyString = minifyJSON(policyString)
-	log.Printf("policyString: %s", policyString)
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		log.Printf("ERROR: parse query: %s", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
 
-	if action == "key" {
-		getTokenResult, err := stsConnection.GetFederationToken(emailAddress,
-			policyString, 43200)
-		if err != nil {
-			log.Printf("ERROR: oauth: %s", err)
-			http.Error(w, "Bad Request", http.StatusBadRequest)
-			return
-		}
+	fmt.Printf("login %s from %s with policy %s key %s\n", user, getRemoteAddress(r),
+		policy.Name, credentials.AccessKeyId)
+	RespondWithCredentials(w, r, credentials, query)
+}
+
+// RespondWithCredentials response to the oauth callback request based on the
+// query parameters and the specified credentials.
+func RespondWithCredentials(w http.ResponseWriter, r *http.Request,
+	credentials *sts.Credentials, query url.Values) {
+	if query.Get("action") == "key" || query.Get("view") == "sh" {
 		w.Header().Set("Content-type", "text-plain")
-		fmt.Fprintf(w, "# expires %s\n", getTokenResult.Credentials.Expiration)
-		fmt.Fprintf(w, "AWS_ACCESS_KEY_ID=%s\n", getTokenResult.Credentials.AccessKeyId)
-		fmt.Fprintf(w, "AWS_SECRET_ACCESS_KEY=%s\n", getTokenResult.Credentials.SecretAccessKey)
-		fmt.Fprintf(w, "AWS_TOKEN=%s\n", getTokenResult.Credentials.SessionToken)
+		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
+		fmt.Fprintf(w, "export AWS_ACCESS_KEY_ID=\"%s\"\n",
+			credentials.AccessKeyId)
+		fmt.Fprintf(w, "export AWS_SECRET_ACCESS_KEY=\"%s\"\n",
+			credentials.SecretAccessKey)
+		fmt.Fprintf(w, "export AWS_SESSION_TOKEN=\"%s\"\n",
+			credentials.SessionToken)
 		return
 	}
 
-	redirectURL, err := GetAWSConsoleURLForUser(emailAddress, policyString)
+	if query.Get("view") == "csh" {
+		w.Header().Set("Content-type", "text-plain")
+		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
+		fmt.Fprintf(w, "setenv AWS_ACCESS_KEY_ID \"%s\"\n", credentials.AccessKeyId)
+		fmt.Fprintf(w, "setenv AWS_SECRET_ACCESS_KEY \"%s\"\n", credentials.SecretAccessKey)
+		fmt.Fprintf(w, "setenv AWS_SESSION_TOKEN \"%s\"\n", credentials.SessionToken)
+		return
+	}
+
+	if query.Get("view") == "fish" {
+		w.Header().Set("Content-type", "text-plain")
+		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
+		fmt.Fprintf(w, "set -x AWS_ACCESS_KEY_ID \"%s\"\n", credentials.AccessKeyId)
+		fmt.Fprintf(w, "set -x AWS_SECRET_ACCESS_KEY \"%s\"\n", credentials.SecretAccessKey)
+		fmt.Fprintf(w, "set -x AWS_SESSION_TOKEN \"%s\"\n", credentials.SessionToken)
+		return
+	}
+
+	redirectURL, err := GetAWSConsoleURL(credentials, query.Get("uri"))
 	if err != nil {
 		log.Printf("ERROR: %s", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
 
-type PolicyRecord struct {
-	Name   string
-	Policy string
-}
-
-var PolicyRecords = []PolicyRecord{
-	{
-		Name: "aws-admin",
-		Policy: `{
-			"Version": "2012-10-17",
-			"Statement": [{
-				"Sid": "Stmt1",
-				"Effect": "Allow",
-				"Action":"*",
-				"Resource":"*"
-			}]
-		}`,
-	},
-	{
-		Name: "aws-users",
-		Policy: `{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "NotAction": "iam:*",
-      "Resource": "*"
-    }
-  ]
-}`,
-	},
-	{
-		Name: "aws-read-only",
-		Policy: `{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Action": [
-        "autoscaling:Describe*",
-        "cloudformation:Describe*",
-        "cloudformation:Get*",
-        "cloudformation:List*",
-        "cloudfront:Get*",
-        "cloudfront:List*",
-        "cloudtrail:Describe*",
-        "cloudtrail:Get*",
-        "cloudwatch:Describe*",
-        "cloudwatch:Get*",
-        "cloudwatch:List*",
-        "dynamodb:Get*",
-        "dynamodb:BatchGet*",
-        "dynamodb:Query",
-        "dynamodb:Scan",
-        "dynamodb:Describe*",
-        "dynamodb:List*",
-        "ec2:Describe*",
-        "elasticache:Describe*",
-        "elasticloadbalancing:Describe*",
-        "elasticmapreduce:Describe*",
-        "elasticmapreduce:List*",
-        "elastictranscoder:Read*",
-        "elastictranscoder:List*",
-        "iam:List*",
-        "iam:Get*",
-        "kinesis:Describe*",
-        "kinesis:Get*",
-        "kinesis:List*",
-        "route53:Get*",
-        "route53:List*",
-        "rds:Describe*",
-        "rds:ListTagsForResource",
-        "s3:Get*",
-        "s3:List*",
-        "sdb:GetAttributes",
-        "sdb:List*",
-        "sdb:Select*",
-        "ses:Get*",
-        "ses:List*",
-        "sns:Get*",
-        "sns:List*",
-        "sqs:GetQueueAttributes",
-        "sqs:ListQueues",
-        "sqs:ReceiveMessage",
-        "tag:get*"
-      ],
-      "Effect": "Allow",
-      "Resource": "*"
-    }
-  ]
-}`,
-	},
-}
-
-func GetAWSConsoleURLForUser(emailAddress string, policString string) (string, error) {
-	getTokenResult, err := stsConnection.GetFederationToken(emailAddress, policString, 900)
-	if err != nil {
-		return "", err
+// Initialize sets up the web server and binds the URI patterns for the
+// authorization service.
+func Initialize() error {
+	if err := LoadConfig(); err != nil {
+		return fmt.Errorf("LoadConfig: %s", err)
 	}
 
-	session := map[string]string{
-		"sessionId":    getTokenResult.Credentials.AccessKeyId,
-		"sessionKey":   getTokenResult.Credentials.SecretAccessKey,
-		"sessionToken": getTokenResult.Credentials.SessionToken,
-	}
-	sessionString, err := json.Marshal(session)
-	if err != nil {
-		return "", err
+	if err := InitializeGoogleLogin(); err != nil {
+		return fmt.Errorf("InitializeGoogleLogin: %s", err)
+
 	}
 
-	federationValues := url.Values{}
-	federationValues.Add("Action", "getSigninToken")
-	federationValues.Add("Session", string(sessionString))
-	federationURL := "https://signin.aws.amazon.com/federation?" + federationValues.Encode()
-
-	federationResponse, err := http.Get(federationURL)
-	if err != nil {
-		return "", err
+	if err := InitializeAWS(); err != nil {
+		return fmt.Errorf("InitializeAWS: %s", err)
 	}
-	tokenDocument := struct{ SigninToken string }{}
-	err = json.NewDecoder(federationResponse.Body).Decode(&tokenDocument)
-	if err != nil {
-		return "", err
-	}
-
-	values := url.Values{}
-	values.Add("Action", "login")
-	if *GoogleDomain != "" {
-		values.Add("Issuer", *GoogleDomain)
-	}
-	values.Add("Destination", "https://console.aws.amazon.com/")
-	values.Add("SigninToken", tokenDocument.SigninToken)
-
-	return "https://signin.aws.amazon.com/federation?" + values.Encode(), nil
-}
-
-var stsConnection *sts.STS
-
-type TimeValue struct {
-	Value time.Time
-}
-
-func (t *TimeValue) String() string {
-	return t.Value.String()
-}
-
-func (t *TimeValue) Set(v string) error {
-	var err error
-	t.Value, err = time.Parse(time.RFC3339, v)
-	return err
-}
-
-func main() {
-	listenAddress := flag.String("listen", ":8080", "The address the web server should listen on")
-
-	region := flag.String("aws-region", "", "AWS region (i.e. us-east-1)")
-	accessKey := flag.String("aws-access-key", "", "AWS access key")
-	secretKey := flag.String("aws-secret-key", "", "AWS secret key")
-	token := flag.String("aws-token", "", "AWS token")
-	expiration := TimeValue{}
-	flag.Var(&expiration, "aws-expiration", "AWS expiration")
-
-	flag.Parse()
-
-	// Configure OAuth
-	OauthConfig.ClientID = *GoogleClientID
-	OauthConfig.ClientSecret = *GoogleClientSecret
-	if *GoogleDomain != "" {
-		OauthConfig.Endpoint.AuthURL += fmt.Sprintf("?hd=%s", *GoogleDomain)
-	}
-	log.Printf("OauthConfig: %#v", OauthConfig)
-
-	// Fetch the google keys for oauth
-	googleCertsResponse, err := http.Get("https://www.googleapis.com/oauth2/v1/certs")
-	if err != nil {
-		panic(err)
-	}
-	if err := json.NewDecoder(googleCertsResponse.Body).Decode(&jwtKeys); err != nil {
-		panic(err)
-	}
-
-	// Configure AWS STS
-	if *region == "" {
-		*region = aws.InstanceRegion()
-		if *region == "unknown" {
-			*region = "us-east-1"
-		}
-	}
-
-	auth, err := aws.GetAuth(*accessKey, *secretKey, *token, expiration.Value)
-	if err != nil {
-		panic(err)
-	}
-
-	stsConnection = sts.New(auth, aws.GetRegion(*region))
 
 	http.HandleFunc("/", GetRoot)
 	http.HandleFunc("/oauth2callback", GetCallback)
-
-	fmt.Printf("Listening on %s\n", *listenAddress)
-	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+	return nil
 }

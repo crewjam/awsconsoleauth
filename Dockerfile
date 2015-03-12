@@ -13,9 +13,6 @@ WORKDIR /go/src/github.com/crewjam/awsconsoleauth
 
 # Pull in any missing dependencies
 RUN go get ./...
+RUN go install ./...
 
-CMD go run http.go \
-  -google-client-id=$GOOGLE_CLIENT_ID \
-  -google-client-secret=$GOOGLE_CLIENT_SECRET \
-  -google-domain=$GOOGLE_DOMAIN \
-  -listen=0.0.0.0:80
+CMD awsauthd

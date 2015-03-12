@@ -6,8 +6,5 @@ aws cloudformation create-stack --stack-name $stack_name \
   --parameters \
     ParameterKey=DnsName,ParameterValue=aws.example.com \
     ParameterKey=KeyPair,ParameterValue=yourkey \
-    ParameterKey=GoogleClientId,ParameterValue=XXX \
-    ParameterKey=GoogleClientSecret,ParameterValue=YYY \
-    ParameterKey=GoogleDomain,ParameterValue=example.com \
     ParameterKey=FrontendSSLCertificateARN,ParameterValue=arn:aws:iam::12345678:server-certificate/aws.example.com \
     ParameterKey=DockerImage,ParameterValue=crewjam/awsauthproxy:latest

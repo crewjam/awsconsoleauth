@@ -18,3 +18,4 @@ _testmain.go
 .idea
 *.swp
 create.sh
+awsauthd.conf
