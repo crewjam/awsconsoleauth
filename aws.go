@@ -102,7 +102,7 @@ func GetAWSConsoleURL(credentials *sts.Credentials, uri string) (string, error) 
 	values := url.Values{}
 	values.Add("Action", "login")
 	values.Add("Destination",
-		"https://console.aws.amazon.com/"+strings.TrimPrefix("/", uri))
+		"https://console.aws.amazon.com/"+strings.TrimPrefix(uri, "/"))
 	values.Add("SigninToken", tokenDocument.SigninToken)
 
 	return "https://signin.aws.amazon.com/federation?" + values.Encode(), nil
