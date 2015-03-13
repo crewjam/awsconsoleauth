@@ -28,6 +28,17 @@ var googleServicePrivateKey = config.String("google-service-private-key", "")
 
 var googleServiceUser = config.String("google-service-user", "")
 
+// InitializeGoogleGroup checks that our Google service account is able to fetch
+// group membership for a user (It users the `google-service-user` to test).
+func InitializeGoogleGroup() error {
+	groups, err := GetUserGroups(*googleServiceUser)
+	if err != nil {
+		return fmt.Errorf("Google groups doesn't work: %s", err)
+	}
+	fmt.Printf("google groups test: passed (user %s is a member of %#v)\n", *googleServiceUser, groups)
+	return nil
+}
+
 // GetUserGroups returns the names of the groups that the specified user is a
 // member of.
 func GetUserGroups(emailAddress string) ([]string, error) {

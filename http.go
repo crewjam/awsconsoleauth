@@ -241,6 +241,10 @@ func Initialize() error {
 		return fmt.Errorf("LoadConfig: %s", err)
 	}
 
+	if err := InitializeGoogleGroup(); err != nil {
+		return fmt.Errorf("InitializeGoogleGroup: %s", err)
+	}
+
 	if err := InitializeGoogleLogin(); err != nil {
 		return fmt.Errorf("InitializeGoogleLogin: %s", err)
 

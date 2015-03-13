@@ -60,8 +60,13 @@ federation secrets, which would allow them to exceed their authorized access.
          openssl pkcs12 -in ~/Downloads/My\ Project-afcee0fea02c.p12 -nodes
    
      Extract the private key part. 
-   
-3. Get an SSL certificate for your domain and upload it to the AWS IAM console.
+
+3. Authorize your new google service account. Follow the 
+   [directions here](https://developers.google.com/accounts/docs/OAuth2ServiceAccount#delegatingauthority)
+   to authorize your new service account to access the scope 
+   `https://www.googleapis.com/auth/admin.directory.group.readonly`.
+
+4. Get an SSL certificate for your domain and upload it to the AWS IAM console.
    Note the ARN for your new certificate.
    
         aws iam upload-server-certificate --server-certificate-name aws.example.com \
@@ -69,13 +74,13 @@ federation secrets, which would allow them to exceed their authorized access.
           --private-key file://ssl.key \
           --certificate-chain file://intermediate.crt
 
-4. Build a configuration file from the awsauthd.conf.template filling in all
+5. Build a configuration file from the awsauthd.conf.template filling in all
    your secrets
    
         cp awsauthd.conf.example awsauthd.conf
         vi awsauthd.conf
         
-5. Create the cloudformation stack described by cloudformation.template using
+6. Create the cloudformation stack described by cloudformation.template using
    the console or the command line
    
         aws cloudformation create-stack --stack-name authproxy \
@@ -87,7 +92,7 @@ federation secrets, which would allow them to exceed their authorized access.
             ParameterKey=FrontendSSLCertificateARN,ParameterValue=arn:aws:iam::12345678:server-certificate/aws.example.com \
             ParameterKey=DockerImage,ParameterValue=crewjam/awsauthproxy:latest
  
-6. After a few moments you should be able to upload your config to the S3
+7. After a few moments you should be able to upload your config to the S3
    data bucket. 
    
         bucket=$(aws cloudformation describe-stack-resources \
