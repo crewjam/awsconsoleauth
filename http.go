@@ -14,7 +14,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-var trustXForwarded = config.Bool("trust-x-forwarded", true)
+var trustXForwarded = config.Bool("trust-x-forwarded", false)
 
 var loginTimeout = config.Duration("google-login-timeout", time.Second*120)
 

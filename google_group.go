@@ -35,7 +35,8 @@ func InitializeGoogleGroup() error {
 	if err != nil {
 		return fmt.Errorf("Google groups doesn't work: %s", err)
 	}
-	fmt.Printf("google groups test: passed (user %s is a member of %#v)\n", *googleServiceUser, groups)
+	fmt.Printf("google groups test: passed (user %s is a member of %#v)\n",
+		*googleServiceUser, groups)
 	return nil
 }
 

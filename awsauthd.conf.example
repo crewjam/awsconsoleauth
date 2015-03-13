@@ -1,0 +1,62 @@
+# This file specifies the configuration for awsauthd.
+# It contains important authorization secrets so you should keep it private.
+
+# The name of your google apps domain. Only users from this domain are allowed
+# to log in.
+google_domain = "example.com"
+
+# Your Google OAuth client ID and secret. This is used to enable identity
+# federation. Get yours from https://console.developers.google.com/
+# (see README.md for details)
+google_client_id = XXX.apps.googleusercontent.com"
+google_client_secret = "XXX"
+
+# Your Google service account email address and private key.
+# Get yours from https://console.developers.google.com/
+# (see README.md for details).
+# The .p12 file you downloaded with a trivial passphrase. To get a plaintext
+# version of the private key, do this:
+#
+#   openssl pkcs12 -in ~/Downloads/ExampleProject-aaaaaaaaaaaa.p12 -nodes
+#
+google_service_email = "...@developer.gserviceaccount.com"
+google_service_private_key = """\
+-----BEGIN RSA PRIVATE KEY-----
+...
+-----END RSA PRIVATE KEY-----
+"""
+
+# The Google service account requires a user to impersonate when checking the
+# directory to see which groups a user is in. Specify this user here. This user
+# is also used to test the directory service at startup.
+google_service_user = "alice@example.com"
+
+# If true then the web service trusts the X-Forwarded-Proto and X-Forwarded-For
+# headers when building URLs and reporting the remote address of a login. You
+# should set this to true only if you are running behind a reverse proxy. If you
+# use the cloudformation document, this setting is managed for you by setting
+# AWSAUTHD_TRUST_X_FORWARDED=true in the environment.
+#trust-x-forwarded=false
+
+# This is the maximum time between the initialization of the Google login prompt
+# and when it completes. This controls the expiration of the token we generate
+# to pass state through the login process. The default of two minutes is
+# probably fine for most people.
+#login-timeout=120s
+
+# Specifies which AWS region to connect to. If awsauthd is running in EC2 it
+# detects the region automatically. Otherwise it uses us-east-1.
+#aws-region=
+
+# Specifies the credentials used to call GetFederationToken(). These credentials
+# must be regular user credentials, not STS credentials, because
+# GetFederationToken doesn't work with STS credentials. The policy applies to
+# these credentials form the maximum allowed access for any users that we'll
+# authenticate through this service.
+#
+# If you use the cloudformation document, you can leave these blank. We set
+# AWSAUTHD_AWS_ACCESS_KEY_ID and AWSAUTHD_AWS_SECRET_ACCESS_KEY for you in the
+# environment.
+#aws-access-key-id=
+#aws-secret-access-key=
+

@@ -1,0 +1,16 @@
+
+# The name of the cloudformation stack
+STACK_NAME=authproxy
+
+# The name of the docker image. (If you want to build your own image, change
+# this to something you control)
+DOCKER_IMAGE=crewjam/awsauthproxy
+
+# The public DNS name of the service
+DNS_NAME=aws.example.com
+
+# The ARN for the certificate you uploaded (see README.md)
+CERTIFICATE_ARN=arn:aws:iam::123456789012:server-certificate/$(DNS_NAME)
+
+# Which SSH key to use
+KEY_PAIR=alice

@@ -1,6 +1,6 @@
 
-This is a tool to allow authorized folks to log into an AWS account using Google
-credentials.
+This is a tool to allow authorized folks to log into an AWS account using 
+credentials from a Google Apps domain.
 
 # How It Works
 
@@ -14,14 +14,29 @@ credentials.
   and redirect them there. Alternatively we pass their temporary credentials to
   them directly for use with the AWS API.
 
+Example requests:
+
+- `https://aws.example.com/` eventually redirects to the root of the console.
+- `https://aws.example.com/?uri=/ec2/v2/home?region=us-east-1%23Instances:sort=desc:launchTime`
+  redirects to the EC2 console view.
+- `https://aws.example.com/?view=sh` displays access keys suitable for pasting
+  into a bash-style shell:
+
+        # expires 2015-03-14 01:01:04 +0000 UTC
+        export AWS_ACCESS_KEY_ID="ASIAJXXXXXXXXXXXXXXX"
+        export AWS_SECRET_ACCESS_KEY="uS1aP/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        export AWS_SESSION_TOKEN="AQoD...i6gF"
+  
+  You can also try `view=csh` and `view=fish`.
+
 # Cloudformation
 
 The cloudformation document creates a load balancer that listens from HTTPS 
 connections on TCP/443 and proxies them via HTTP to instances in an autoscaling
-group of size 1. At boot, the instances run a the awsauthproxy docker image 
-which runs awsauthd.
+group of size 1. At boot, the instances run a the `awsauthproxy` docker image 
+which runs `awsauthd`.
 
-Awsauthd loads its configuration from an S3 bucket that is created by
+`awsauthd` loads its configuration from an S3 bucket that is created by
 the cloudformation document. The instance profile allows it to access only this
 bucket and nothing else.
 
@@ -80,30 +95,31 @@ federation secrets, which would allow them to exceed their authorized access.
         cp awsauthd.conf.example awsauthd.conf
         vi awsauthd.conf
         
-6. Create the cloudformation stack described by cloudformation.template using
-   the console or the command line
+6. Create the cloudformation stack described by cloudformation.template. You can
+   use the provided Makefile, if you you'll need to customize it a little:
    
-        aws cloudformation create-stack --stack-name authproxy \
-          --template-body="$(cat cloudformation.template)" \
-          --capabilities=CAPABILITY_IAM \
-          --parameters \
-            ParameterKey=DnsName,ParameterValue=aws.example.com \
-            ParameterKey=KeyPair,ParameterValue=yourKey \
-            ParameterKey=FrontendSSLCertificateARN,ParameterValue=arn:aws:iam::12345678:server-certificate/aws.example.com \
-            ParameterKey=DockerImage,ParameterValue=crewjam/awsauthproxy:latest
- 
+        cp cloudformation.mk.example cloudformation.mk
+        vi cloudformation.mk
+        make create
+   
+   Note: the Makefile assumes you have the AWS CLI installed.
+   
 7. After a few moments you should be able to upload your config to the S3
    data bucket. 
    
-        bucket=$(aws cloudformation describe-stack-resources \
-          --stack-name authproxy --logical-resource-id DataBucket \
-          --output text | cut -f3)
-        aws s3 cp awsauthd.conf s3://$bucket/awsauthd.conf
+        make put-config
    
 # Limitations
 
 - The Google groups and the AWS policy mappings are currently hard coded.
+
 - The size of policy document passed to GetFederationToken() is fairly limited.
   I had to remove stuff from the default ReadOnlyAccess policy to make it fit.
+
 - We don't currently have a way to restrict access to the service launch
   configuration, which exposes the root GetFederationToken() credentials. XXX
+
+- All errors are reported to users in exactly the same way, by returning 
+  *400 Bad Request*. This has the benefit of preventing any leakage to 
+  unauthorized users but is a little unfriendly. After carefully considering the
+  implications, we might want errors that are a little friendlier.

@@ -72,6 +72,7 @@
     "FederationUserAccessKey": {
       "Type": "AWS::IAM::AccessKey",
       "Properties": {
+        "Serial": 3,
         "UserName": {"Ref": "FederationUser"}
       }
     },
@@ -323,6 +324,7 @@
                 "set -ex\n",
                 "curl -sSL https://get.docker.com/ | sh\n",
                 "docker run -d",
+                " -e AWSAUTHD_TRUST_X_FORWARDED=true",
                 " -e AWSAUTHD_AWS_ACCESS_KEY_ID=", {"Ref": "FederationUserAccessKey"},
                 " -e AWSAUTHD_AWS_SECRET_ACCESS_KEY=", {"Fn::GetAtt": ["FederationUserAccessKey", "SecretAccessKey"]},
                 " -p 80:80",

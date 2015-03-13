@@ -17,5 +17,5 @@ _testmain.go
 *.prof
 .idea
 *.swp
-create.sh
 awsauthd.conf
+cloudformation.mk
