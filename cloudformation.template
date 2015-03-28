@@ -17,6 +17,36 @@
       "Type": "String",
       "Default": ""
     },
+    "GoogleDomain": {
+      "Description": "The name of your google apps domain. Only users from this domain are allowed to log in.",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleClientID": {
+      "Description": "Your Google OAuth client ID. This is used to enable identity federation. Get yours from https://console.developers.google.com/",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleClientSecret": {
+      "Description": "The secret that goes with GoogleClientId",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleServiceEmail": {
+      "Description": "Your Google service account email address and private key. This is used to determine a users group membership",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleServicePrivateKey": {
+      "Description": "The private kye that goes with GoogleServiceEmail",
+      "Type": "String",
+      "Default": ""
+    },
+    "GoogleServiceUser": {
+      "Description": "The Google service account requires a user to impersonate when checking the directory to see which groups a user is in. Specify this user here. This user is also used to test the directory service at startup.",
+      "Type": "String",
+      "Default": ""
+    },
     "DockerImage": {
       "Description": "Docker image for the auth proxy",
       "Type": "String",
@@ -56,13 +86,6 @@
                 "Effect": "Allow",
                 "NotAction": "iam:*",
                 "Resource": "*"
-              },
-              {
-                "Action": ["s3:GetObject"],
-                "Effect": "Deny",
-                "Resource": [
-                  {"Fn::Join": ["", ["arn:aws:s3:::", {"Ref": "DataBucket"}]]}
-                ]
               }
             ]
           }
@@ -235,64 +258,6 @@
         ]
       }
     },
-    "DataBucket": {
-      "Type": "AWS::S3::Bucket",
-      "Properties": {
-        "AccessControl": "Private"
-      }
-    },
-
-    "InstanceProfile": {
-      "Type": "AWS::IAM::InstanceProfile",
-      "Properties": {
-        "Path": "/",
-        "Roles": [
-          {
-            "Ref": "InstanceRole"
-          }
-        ]
-      }
-    },
-
-    "InstanceRole": {
-      "Type": "AWS::IAM::Role",
-      "Properties": {
-        "AssumeRolePolicyDocument": {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Effect": "Allow",
-              "Principal": {
-                "Service": [
-                  "ec2.amazonaws.com"
-                ]
-              },
-              "Action": [
-                "sts:AssumeRole"
-              ]
-            }
-          ]
-        },
-        "Path": "/",
-        "Policies": [
-          {
-            "PolicyName": "InstancePolicy",
-            "PolicyDocument": {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Action": ["s3:GetObject"],
-                  "Effect": "Allow",
-                  "Resource": [
-                    {"Fn::Join": ["", ["arn:aws:s3:::", {"Ref": "DataBucket"}, "/*"]]}
-                  ]
-                }
-              ]
-            }
-          }
-        ]
-      }
-    },
     "LaunchConfig": {
       "Type": "AWS::AutoScaling::LaunchConfiguration",
       "Properties": {
@@ -306,7 +271,6 @@
           ]
         },
         "InstanceType": "t2.micro",
-        "IamInstanceProfile": {"Ref": "InstanceProfile"},
         "KeyName": {
           "Ref": "KeyPair"
         },
@@ -327,10 +291,15 @@
                 " -e AWSAUTHD_TRUST_X_FORWARDED=true",
                 " -e AWSAUTHD_AWS_ACCESS_KEY_ID=", {"Ref": "FederationUserAccessKey"},
                 " -e AWSAUTHD_AWS_SECRET_ACCESS_KEY=", {"Fn::GetAtt": ["FederationUserAccessKey", "SecretAccessKey"]},
+                " -e AWSAUTHD_GOOGLE_DOMAIN=", {"Ref": "GoogleDomain"},
+                " -e AWSAUTHD_GOOGLE_CLIENT_ID=", {"Ref": "GoogleClientID"},
+                " -e AWSAUTHD_GOOGLE_CLIENT_SECRET=", {"Ref": "GoogleClientSecret"},
+                " -e AWSAUTHD_GOOGLE_SERVICE_EMAIL=", {"Ref": "GoogleServiceEmail"},
+                " -e AWSAUTHD_GOOGLE_SERVICE_PRIVATE_KEY=\"", {"Ref": "GoogleServicePrivateKey"}, "\"",
+                " -e AWSAUTHD_GOOGLE_SERVICE_USER=", {"Ref": "GoogleServiceUser"},
                 " -p 80:80",
                 " ", {"Ref": "DockerImage"},
-                " awsauthd -listen=0.0.0.0:80 -config s3://",
-                {"Ref": "DataBucket"}, "/awsauthd.conf\n"
+                " awsauthd -listen=0.0.0.0:80\n"
               ]
             ]
           }

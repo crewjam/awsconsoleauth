@@ -89,17 +89,15 @@ federation secrets, which would allow them to exceed their authorized access.
           --private-key file://ssl.key \
           --certificate-chain file://intermediate.crt
 
-5. Build a configuration file from the awsauthd.conf.template filling in all
+5. Build a configuration file from the cloudformation.mk.template filling in all
    your secrets
-   
-        cp awsauthd.conf.example awsauthd.conf
-        vi awsauthd.conf
-        
-6. Create the cloudformation stack described by cloudformation.template. You can
-   use the provided Makefile, if you you'll need to customize it a little:
    
         cp cloudformation.mk.example cloudformation.mk
         vi cloudformation.mk
+
+6. Create the cloudformation stack described by cloudformation.template. You can
+   use the provided Makefile, if you you'll need to customize it a little:
+
         make create
    
    Note: the Makefile assumes you have the AWS CLI installed.

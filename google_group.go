@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"strings"
 
 	"github.com/drone/config"
 	"golang.org/x/oauth2"
@@ -31,6 +32,11 @@ var googleServiceUser = config.String("google-service-user", "")
 // InitializeGoogleGroup checks that our Google service account is able to fetch
 // group membership for a user (It users the `google-service-user` to test).
 func InitializeGoogleGroup() error {
+	// replace spaces in googleServicePrivateKey with newlines. This makes it
+	// easier to pass the key in an environment variable
+	*googleServicePrivateKey = strings.Replace(*googleServicePrivateKey, " ", "", -1)
+	*googleServicePrivateKey = "-----BEGIN RSA PRIVATE KEY-----\n" + *googleServicePrivateKey + "\n-----END RSA PRIVATE KEY-----"
+
 	groups, err := GetUserGroups(*googleServiceUser)
 	if err != nil {
 		return fmt.Errorf("Google groups doesn't work: %s", err)

@@ -14,3 +14,19 @@ CERTIFICATE_ARN=arn:aws:iam::123456789012:server-certificate/$(DNS_NAME)
 
 # Which SSH key to use
 KEY_PAIR=alice
+
+# The name of your google apps domain. Only users from this domain are allowed
+# to log in.
+GOOGLE_DOMAIN=example.com
+
+# Your Google OAuth client ID and secret. This is used to enable identity
+# federation. Get yours from https://console.developers.google.com/
+# (see README.md for details)
+GOOGLE_CLIENT_ID=1234-xxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=yyyy
+GOOGLE_SERVICE_EMAIL=1234-adfasdfasdfasdf@developer.gserviceaccount.com
+GOOGLE_SERVICE_PRIVATE_KEY="\
+-----BEGIN RSA PRIVATE KEY-----\
+...\
+-----END RSA PRIVATE KEY-----"
+GOOGLE_SERVICE_USER=alice@example.com

@@ -237,10 +237,6 @@ func RespondWithCredentials(w http.ResponseWriter, r *http.Request,
 // Initialize sets up the web server and binds the URI patterns for the
 // authorization service.
 func Initialize() error {
-	if err := LoadConfig(); err != nil {
-		return fmt.Errorf("LoadConfig: %s", err)
-	}
-
 	if err := InitializeGoogleGroup(); err != nil {
 		return fmt.Errorf("InitializeGoogleGroup: %s", err)
 	}
@@ -253,6 +249,8 @@ func Initialize() error {
 	if err := InitializeAWS(); err != nil {
 		return fmt.Errorf("InitializeAWS: %s", err)
 	}
+
+	// TODO(ross): Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 
 	http.HandleFunc("/", GetRoot)
 	http.HandleFunc("/oauth2callback", GetCallback)

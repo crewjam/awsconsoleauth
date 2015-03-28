@@ -9,7 +9,6 @@ help:
 	@echo " build      - build the Docker image and push it to the docker hub"
 	@echo " create     - create a cloudformation stack"
 	@echo " update     - update the cloudformation stack"
-	@echo " put-config - copy awsauthd.conf to S3"
 
 build:
 	docker build -t $(DOCKER_IMAGE) .
@@ -24,6 +23,12 @@ create:
 	    ParameterKey=DnsName,ParameterValue=$(DNS_NAME) \
 	    ParameterKey=KeyPair,ParameterValue=$(KEY_PAIR) \
 	    ParameterKey=FrontendSSLCertificateARN,ParameterValue=$(CERTIFICATE_ARN) \
+	    ParameterKey=GoogleDomain,ParameterValue=$(GOOGLE_DOMAIN) \
+	    ParameterKey=GoogleClientID,ParameterValue=$(GOOGLE_CLIENT_ID) \
+	    ParameterKey=GoogleClientSecret,ParameterValue=$(GOOGLE_CLIENT_SECRET) \
+	    ParameterKey=GoogleServiceEmail,ParameterValue=$(GOOGLE_SERVICE_EMAIL) \
+	    ParameterKey=GoogleServicePrivateKey,ParameterValue="$(GOOGLE_SERVICE_PRIVATE_KEY)" \
+	    ParameterKey=GoogleServiceUser,ParameterValue=$(GOOGLE_SERVICE_USER) \
 	    ParameterKey=DockerImage,ParameterValue=$(DOCKER_IMAGE):latest
 
 update:
@@ -34,9 +39,10 @@ update:
 	    ParameterKey=DnsName,UsePreviousValue=true \
 	    ParameterKey=KeyPair,UsePreviousValue=true \
 	    ParameterKey=FrontendSSLCertificateARN,UsePreviousValue=true \
+	    ParameterKey=GoogleDomain,ParameterValue=$(GOOGLE_DOMAIN) \
+	    ParameterKey=GoogleClientID,ParameterValue=$(GOOGLE_CLIENT_ID) \
+	    ParameterKey=GoogleClientSecret,ParameterValue=$(GOOGLE_CLIENT_SECRET) \
+	    ParameterKey=GoogleServiceEmail,ParameterValue=$(GOOGLE_SERVICE_EMAIL) \
+	    ParameterKey=GoogleServicePrivateKey,ParameterValue=$(GOOGLE_SERVICE_PRIVATE_KEY) \
+	    ParameterKey=GoogleServiceUser,ParameterValue=$(GOOGLE_SERVICE_USER) \
 	    ParameterKey=DockerImage,UsePreviousValue=true
-
-put-config:
-	aws s3 cp awsauthd.conf s3://$(shell aws cloudformation \
-	  describe-stack-resources --stack-name $(STACK_NAME) \
-	  --logical-resource-id DataBucket --output text | cut -f3)/awsauthd.conf
