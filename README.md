@@ -121,3 +121,7 @@ federation secrets, which would allow them to exceed their authorized access.
   *400 Bad Request*. This has the benefit of preventing any leakage to 
   unauthorized users but is a little unfriendly. After carefully considering the
   implications, we might want errors that are a little friendlier.
+
+- TODO: google rotates the key the used to sign the JWT, so we get something like
+  ``2015/03/29 17:04:20 failed to parse google id_token: Unknown key in token``
+  workaround is to restart.

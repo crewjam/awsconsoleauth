@@ -36,9 +36,9 @@ update:
 	  --template-body='$(shell cat cloudformation.template)' \
 	  --capabilities=CAPABILITY_IAM \
 	  --parameters \
-	    ParameterKey=DnsName,UsePreviousValue=true \
-	    ParameterKey=KeyPair,UsePreviousValue=true \
-	    ParameterKey=FrontendSSLCertificateARN,UsePreviousValue=true \
+	    ParameterKey=DnsName,ParameterValue=$(DNS_NAME) \
+	    ParameterKey=KeyPair,ParameterValue=$(KEY_PAIR) \
+	    ParameterKey=FrontendSSLCertificateARN,ParameterValue=$(CERTIFICATE_ARN) \
 	    ParameterKey=GoogleDomain,ParameterValue=$(GOOGLE_DOMAIN) \
 	    ParameterKey=GoogleClientID,ParameterValue=$(GOOGLE_CLIENT_ID) \
 	    ParameterKey=GoogleClientSecret,ParameterValue=$(GOOGLE_CLIENT_SECRET) \

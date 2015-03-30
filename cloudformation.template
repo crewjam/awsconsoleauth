@@ -86,6 +86,13 @@
                 "Effect": "Allow",
                 "NotAction": "iam:*",
                 "Resource": "*"
+              },
+              {
+                "Action": ["cloudformation:*"],
+                "Effect": "Deny",
+                "Resource": {"Fn::Join": ["", ["arn:aws:iam",
+                  {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":stack/",
+                  {"Ref": "AWS::StackName"}, "/*"]]}
               }
             ]
           }
@@ -95,7 +102,7 @@
     "FederationUserAccessKey": {
       "Type": "AWS::IAM::AccessKey",
       "Properties": {
-        "Serial": 3,
+        "Serial": 4,
         "UserName": {"Ref": "FederationUser"}
       }
     },
@@ -260,6 +267,11 @@
     },
     "LaunchConfig": {
       "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Metadata": {
+        "SecretAccessKey": {"Fn::GetAtt": ["FederationUserAccessKey", "SecretAccessKey"]},
+        "GoogleClientSecret": {"Ref": "GoogleClientSecret"},
+        "GoogleServicePrivateKey": {"Ref": "GoogleServicePrivateKey"}
+      },
       "Properties": {
         "ImageId": {
           "Fn::FindInMap": [
@@ -286,16 +298,18 @@
               [
                 "#!/bin/bash\n",
                 "set -ex\n",
+                "curl https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz | tar -xz --strip-components=1\n",
+                "python setup.py install\n",
                 "curl -sSL https://get.docker.com/ | sh\n",
                 "docker run -d",
                 " -e AWSAUTHD_TRUST_X_FORWARDED=true",
                 " -e AWSAUTHD_AWS_ACCESS_KEY_ID=", {"Ref": "FederationUserAccessKey"},
-                " -e AWSAUTHD_AWS_SECRET_ACCESS_KEY=", {"Fn::GetAtt": ["FederationUserAccessKey", "SecretAccessKey"]},
+                " -e AWSAUTHD_AWS_SECRET_ACCESS_KEY=$(cfn-get-metadata -v -s ", {"Ref": "AWS::StackName"}, " -r LaunchConfig -k SecretAccessKey)",
                 " -e AWSAUTHD_GOOGLE_DOMAIN=", {"Ref": "GoogleDomain"},
                 " -e AWSAUTHD_GOOGLE_CLIENT_ID=", {"Ref": "GoogleClientID"},
-                " -e AWSAUTHD_GOOGLE_CLIENT_SECRET=", {"Ref": "GoogleClientSecret"},
+                " -e AWSAUTHD_GOOGLE_CLIENT_SECRET=$(cfn-get-metadata -v -s ", {"Ref": "AWS::StackName"}, " -r LaunchConfig -k GoogleClientSecret)",
                 " -e AWSAUTHD_GOOGLE_SERVICE_EMAIL=", {"Ref": "GoogleServiceEmail"},
-                " -e AWSAUTHD_GOOGLE_SERVICE_PRIVATE_KEY=\"", {"Ref": "GoogleServicePrivateKey"}, "\"",
+                " -e AWSAUTHD_GOOGLE_SERVICE_PRIVATE_KEY=\"$(cfn-get-metadata -v -s ", {"Ref": "AWS::StackName"}, " -r LaunchConfig -k GoogleServicePrivateKey)\"",
                 " -e AWSAUTHD_GOOGLE_SERVICE_USER=", {"Ref": "GoogleServiceUser"},
                 " -p 80:80",
                 " ", {"Ref": "DockerImage"},
