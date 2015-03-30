@@ -246,7 +246,7 @@
         ],
         "MaxSize": "1",
         "MinSize": "1",
-        "HealthCheckGracePeriod": "300",
+        "HealthCheckGracePeriod": "600",
         "HealthCheckType": "ELB",
         "LaunchConfigurationName": {
           "Ref": "LaunchConfig"
