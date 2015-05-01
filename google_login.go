@@ -3,7 +3,9 @@ package awsconsoleauth
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/drone/config"
@@ -22,8 +24,7 @@ var googleOauthConfig = &oauth2.Config{
 
 var googleJWTSigningKeys = map[string]interface{}{}
 
-// InitializeGoogleLogin sets up access to the Google login service
-func InitializeGoogleLogin() error {
+func updateGoogleJWTSigningKeys() error {
 	// Fetch the google keys for oauth
 	googleCertsResponse, err := http.Get("https://www.googleapis.com/oauth2/v1/certs")
 	if err != nil {
@@ -32,6 +33,28 @@ func InitializeGoogleLogin() error {
 	if err := json.NewDecoder(googleCertsResponse.Body).Decode(&googleJWTSigningKeys); err != nil {
 		return err
 	}
+	return nil
+}
+
+// InitializeGoogleLogin sets up access to the Google login service
+func InitializeGoogleLogin() error {
+	if err := updateGoogleJWTSigningKeys(); err != nil {
+		return nil
+	}
+
+	// keep the JWT signing keys up to date by polling once per hour
+	go func() {
+		time.Sleep(60 * time.Minute)
+		for {
+			if err := updateGoogleJWTSigningKeys(); err != nil {
+				log.Printf("Google JWT signing keys: %s", err)
+				time.Sleep(time.Minute)
+				continue
+			}
+			log.Printf("updates google JWT signing keys")
+			time.Sleep(60 * time.Minute)
+		}
+	}()
 
 	// Configure OAuth
 	googleOauthConfig.ClientID = *googleClientID
