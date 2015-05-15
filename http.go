@@ -43,7 +43,7 @@ func getRemoteAddress(r *http.Request) string {
 	return remoteAddr
 }
 
-func newTokenFromRefresh(refreshToken string) (*oauth2.Token, error) {
+func newTokenFromRefreshToken(refreshToken string) (*oauth2.Token, error) {
 	token := new(oauth2.Token)
 	token.RefreshToken = refreshToken
 	token.Expiry = time.Now()
@@ -65,7 +65,7 @@ func GetRoot(w http.ResponseWriter, r *http.Request) {
 	// identify the user, avoiding the whole OAuth flow and allowing for automation.
 	refreshToken := r.FormValue("refresh_token")
 	if refreshToken != "" {
-		token, err := newTokenFromRefresh(refreshToken)
+		token, err := newTokenFromRefreshToken(refreshToken)
 		if err == nil {
 			FetchCredentialsForToken(w, r, token, r.URL.RawQuery)
 			return
