@@ -224,37 +224,37 @@ func FetchCredentialsForToken(w http.ResponseWriter, r *http.Request,
 	RespondWithCredentials(w, r, credentials, query, token)
 }
 
+func formatEnvVariableForShell(name, value, shell string) string {
+	switch shell {
+	case "csh":
+		return fmt.Sprintf("setenv %s \"%s\"\n", name, value)
+	case "fish":
+		return fmt.Sprintf("set -x %s \"%s\"\n", name, value)
+	default:
+		return fmt.Sprintf("export %s=\"%s\"\n", name, value)
+	}
+}
+
 // RespondWithCredentials response to the oauth callback request based on the
 // query parameters and the specified credentials.
 func RespondWithCredentials(w http.ResponseWriter, r *http.Request,
 	credentials *sts.Credentials, query url.Values, token *oauth2.Token) {
-	if query.Get("action") == "key" || query.Get("view") == "sh" {
-		w.Header().Set("Content-type", "text-plain")
-		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
-		fmt.Fprintf(w, "export AWS_ACCESS_KEY_ID=\"%s\"\n", credentials.AccessKeyId)
-		fmt.Fprintf(w, "export AWS_SECRET_ACCESS_KEY=\"%s\"\n", credentials.SecretAccessKey)
-		fmt.Fprintf(w, "export AWS_SESSION_TOKEN=\"%s\"\n", credentials.SessionToken)
-		fmt.Fprintf(w, "export OAUTH_REFRESH_TOKEN=\"%s\"\n", token.RefreshToken)
-		return
+
+	view := query.Get("view")
+	if query.Get("action") == "key" {
+		view = "sh"
 	}
 
-	if query.Get("view") == "csh" {
+	if view == "sh" || view == "csh" || view == "fish" {
 		w.Header().Set("Content-type", "text-plain")
 		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
-		fmt.Fprintf(w, "setenv AWS_ACCESS_KEY_ID \"%s\"\n", credentials.AccessKeyId)
-		fmt.Fprintf(w, "setenv AWS_SECRET_ACCESS_KEY \"%s\"\n", credentials.SecretAccessKey)
-		fmt.Fprintf(w, "setenv AWS_SESSION_TOKEN \"%s\"\n", credentials.SessionToken)
-		fmt.Fprintf(w, "setenv OAUTH_REFRESH_TOKEN \"%s\"\n", token.RefreshToken)
-		return
-	}
-
-	if query.Get("view") == "fish" {
-		w.Header().Set("Content-type", "text-plain")
-		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
-		fmt.Fprintf(w, "set -x AWS_ACCESS_KEY_ID \"%s\"\n", credentials.AccessKeyId)
-		fmt.Fprintf(w, "set -x AWS_SECRET_ACCESS_KEY \"%s\"\n", credentials.SecretAccessKey)
-		fmt.Fprintf(w, "set -x AWS_SESSION_TOKEN \"%s\"\n", credentials.SessionToken)
-		fmt.Fprintf(w, "set -x OAUTH_REFRESH_TOKEN \"%s\"\n", token.RefreshToken)
+		fmt.Fprint(w, formatEnvVariableForShell("AWS_ACCESS_KEY_ID", credentials.AccessKeyId, view))
+		fmt.Fprint(w, formatEnvVariableForShell("AWS_SECRET_ACCESS_KEY", credentials.SecretAccessKey, view))
+		fmt.Fprint(w, formatEnvVariableForShell("AWS_SESSION_TOKEN", credentials.SessionToken, view))
+		if token.RefreshToken != "" {
+			fmt.Fprint(w, "# add this as a refresh_token param in the future to avoid the OAuth flow\n")
+			fmt.Fprint(w, formatEnvVariableForShell("OAUTH_REFRESH_TOKEN", token.RefreshToken, view))
+		}
 		return
 	}
 
