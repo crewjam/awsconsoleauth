@@ -23,19 +23,30 @@ type Group struct {
 	Name string `json:"name"`
 }
 
-var googleServiceEmail = config.String("google-service-email", "")
+const rsaKeyPrefix = "-----BEGIN RSA PRIVATE KEY-----"
 
-var googleServicePrivateKey = config.String("google-service-private-key", "")
+func formatRsaKey(key string) string {
+	// If this came from the config file it should be formatted right
+	if !strings.HasPrefix(key, rsaKeyPrefix) {
+		// Replace spaces in the key with newlines. This makes it
+		// easier to pass the key in an environment variable
+		key = strings.Replace(key, " ", "\n", -1)
+		key = fmt.Sprintf("%s\n%s\n-----END RSA PRIVATE KEY-----", rsaKeyPrefix, key)
+	}
 
-var googleServiceUser = config.String("google-service-user", "")
+	return key
+}
+
+var (
+	googleServiceEmail      = config.String("google-service-email", "")
+	googleServicePrivateKey = config.String("google-service-private-key", "")
+	googleServiceUser       = config.String("google-service-user", "")
+)
 
 // InitializeGoogleGroup checks that our Google service account is able to fetch
 // group membership for a user (It users the `google-service-user` to test).
 func InitializeGoogleGroup() error {
-	// replace spaces in googleServicePrivateKey with newlines. This makes it
-	// easier to pass the key in an environment variable
-	*googleServicePrivateKey = strings.Replace(*googleServicePrivateKey, " ", "", -1)
-	*googleServicePrivateKey = "-----BEGIN RSA PRIVATE KEY-----\n" + *googleServicePrivateKey + "\n-----END RSA PRIVATE KEY-----"
+	*googleServicePrivateKey = formatRsaKey(*googleServicePrivateKey)
 
 	groups, err := GetUserGroups(*googleServiceUser)
 	if err != nil {
