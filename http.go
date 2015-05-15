@@ -43,11 +43,36 @@ func getRemoteAddress(r *http.Request) string {
 	return remoteAddr
 }
 
+func newTokenFromRefreshToken(refreshToken string) (*oauth2.Token, error) {
+	token := new(oauth2.Token)
+	token.RefreshToken = refreshToken
+	token.Expiry = time.Now()
+
+	// TokenSource will refresh the token if needed (which is likely in this
+	// use case)
+	oauthConfig := *googleOauthConfig
+	ts := oauthConfig.TokenSource(oauth2.NoContext, token)
+
+	return ts.Token()
+}
+
 // GetRoot handles requests for '/' by redirecting to the Google OAuth URL.
 //
 // Any query string arguments are passed securely through the OAuth flow to
 // /oauth2callback
 func GetRoot(w http.ResponseWriter, r *http.Request) {
+	// If refresh_token is provided, we can use it to get a new ID token to
+	// identify the user, avoiding the whole OAuth flow and allowing for automation.
+	refreshToken := r.FormValue("refresh_token")
+	if refreshToken != "" {
+		token, err := newTokenFromRefreshToken(refreshToken)
+		if err == nil {
+			FetchCredentialsForToken(w, r, token, r.URL.RawQuery)
+			return
+		}
+		// Otherwise we just fallback to the default flow below
+	}
+
 	state, err := generateState(r)
 	if err != nil {
 		log.Printf("ERROR: cannot generate token: %s", err)
@@ -57,7 +82,7 @@ func GetRoot(w http.ResponseWriter, r *http.Request) {
 
 	oauthConfig := *googleOauthConfig
 	oauthConfig.RedirectURL = fmt.Sprintf("%s/oauth2callback", getOriginURL(r))
-	url := oauthConfig.AuthCodeURL(state)
+	url := oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -131,7 +156,7 @@ func GetCallback(w http.ResponseWriter, r *http.Request) {
 	oauthConfig := *googleOauthConfig
 	oauthConfig.RedirectURL = fmt.Sprintf("%s/oauth2callback", getOriginURL(r))
 
-	oauthToken, err := oauthConfig.Exchange(oauth2.NoContext, r.FormValue("code"))
+	token, err := oauthConfig.Exchange(oauth2.NoContext, r.FormValue("code"))
 	if err != nil {
 		log.Printf("oauth exchange failed: %s", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -145,7 +170,14 @@ func GetCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := GetUserFromGoogleOauthToken(oauthToken.Extra("id_token").(string))
+	FetchCredentialsForToken(w, r, token, rawQuery)
+}
+
+// Utility method which gets the AWS credentials for the given OAuth token
+func FetchCredentialsForToken(w http.ResponseWriter, r *http.Request,
+	token *oauth2.Token, rawQuery string) {
+
+	user, err := GetUserFromGoogleOauthToken(token.Extra("id_token").(string))
 	if err != nil {
 		log.Printf("failed to parse google id_token: %s", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -188,40 +220,41 @@ func GetCallback(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("login %s from %s with policy %s key %s\n", user, getRemoteAddress(r),
 		policy.Name, credentials.AccessKeyId)
-	RespondWithCredentials(w, r, credentials, query)
+
+	RespondWithCredentials(w, r, credentials, query, token)
+}
+
+func formatEnvVariableForShell(name, value, shell string) string {
+	switch shell {
+	case "csh":
+		return fmt.Sprintf("setenv %s \"%s\"\n", name, value)
+	case "fish":
+		return fmt.Sprintf("set -x %s \"%s\"\n", name, value)
+	default:
+		return fmt.Sprintf("export %s=\"%s\"\n", name, value)
+	}
 }
 
 // RespondWithCredentials response to the oauth callback request based on the
 // query parameters and the specified credentials.
 func RespondWithCredentials(w http.ResponseWriter, r *http.Request,
-	credentials *sts.Credentials, query url.Values) {
-	if query.Get("action") == "key" || query.Get("view") == "sh" {
-		w.Header().Set("Content-type", "text-plain")
-		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
-		fmt.Fprintf(w, "export AWS_ACCESS_KEY_ID=\"%s\"\n",
-			credentials.AccessKeyId)
-		fmt.Fprintf(w, "export AWS_SECRET_ACCESS_KEY=\"%s\"\n",
-			credentials.SecretAccessKey)
-		fmt.Fprintf(w, "export AWS_SESSION_TOKEN=\"%s\"\n",
-			credentials.SessionToken)
-		return
+	credentials *sts.Credentials, query url.Values, token *oauth2.Token) {
+
+	view := query.Get("view")
+	if query.Get("action") == "key" {
+		view = "sh"
 	}
 
-	if query.Get("view") == "csh" {
+	if view == "sh" || view == "csh" || view == "fish" {
 		w.Header().Set("Content-type", "text-plain")
 		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
-		fmt.Fprintf(w, "setenv AWS_ACCESS_KEY_ID \"%s\"\n", credentials.AccessKeyId)
-		fmt.Fprintf(w, "setenv AWS_SECRET_ACCESS_KEY \"%s\"\n", credentials.SecretAccessKey)
-		fmt.Fprintf(w, "setenv AWS_SESSION_TOKEN \"%s\"\n", credentials.SessionToken)
-		return
-	}
-
-	if query.Get("view") == "fish" {
-		w.Header().Set("Content-type", "text-plain")
-		fmt.Fprintf(w, "# expires %s\n", credentials.Expiration)
-		fmt.Fprintf(w, "set -x AWS_ACCESS_KEY_ID \"%s\"\n", credentials.AccessKeyId)
-		fmt.Fprintf(w, "set -x AWS_SECRET_ACCESS_KEY \"%s\"\n", credentials.SecretAccessKey)
-		fmt.Fprintf(w, "set -x AWS_SESSION_TOKEN \"%s\"\n", credentials.SessionToken)
+		fmt.Fprint(w, formatEnvVariableForShell("AWS_ACCESS_KEY_ID", credentials.AccessKeyId, view))
+		fmt.Fprint(w, formatEnvVariableForShell("AWS_SECRET_ACCESS_KEY", credentials.SecretAccessKey, view))
+		fmt.Fprint(w, formatEnvVariableForShell("AWS_SESSION_TOKEN", credentials.SessionToken, view))
+		if token.RefreshToken != "" {
+			fmt.Fprint(w, "# add this as a refresh_token param in the future to avoid the OAuth flow\n")
+			fmt.Fprint(w, formatEnvVariableForShell("OAUTH_REFRESH_TOKEN", token.RefreshToken, view))
+		}
 		return
 	}
 
