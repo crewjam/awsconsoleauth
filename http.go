@@ -253,6 +253,9 @@ func Initialize() error {
 	// TODO(ross): Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
 
 	http.HandleFunc("/", GetRoot)
+	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	})
 	http.HandleFunc("/oauth2callback", GetCallback)
 	return nil
 }
