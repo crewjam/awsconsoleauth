@@ -32,6 +32,11 @@ var PolicyRecords = []PolicyRecord{
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Action": ["iam:List*","iam:Get*","iam:PassRole"],
+      "Resource": "*",
+      "Effect": "Allow"
+    },
+    {
       "Effect": "Allow",
       "NotAction": "iam:*",
       "Resource": "*"
