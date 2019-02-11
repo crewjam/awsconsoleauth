@@ -66,7 +66,7 @@ federation secrets, which would allow them to exceed their authorized access.
    which groups the user is in.
    
    - Navigate to https://console.developers.google.com/
-   - Nagivate to your project
+   - Navigate to your project
    - Click "Create Client ID"
    - Select "Service Account"
    - Note the email address created.
